@@ -1,0 +1,30 @@
+modules:
+  jira:projectPage:
+    - key: stochcraft-forge-hello-world-project-page
+      resource: main
+      resolver:
+        function: resolver
+      title: stochcraft-forge
+  function:
+    - key: resolver
+      handler: index.handler
+      memoryMB: 1024
+resources:
+  - key: main
+    path: static/stochcraft
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 256
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/1b139ad7-c068-4830-853a-b3c6e6df4f47
+permissions:
+  scopes:
+    - read:jira-work
+  content:
+    scripts:
+      - unsafe-inline
+      - unsafe-eval
+      - "blob:"
+    styles:
+      - unsafe-inline

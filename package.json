@@ -1,0 +1,20 @@
+{
+  "name": "stochcraft-forge",
+  "version": "0.1.0",
+  "main": "index.js",
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "@forge/bridge": "7.3.0",
+    "esbuild": "0.28.2",
+    "eslint": "^8.56.0",
+    "eslint-plugin-react-hooks": "^4.6.0"
+  },
+  "dependencies": {
+    "@forge/api": "8.5.0",
+    "@forge/resolver": "2.0.2"
+  },
+  "scripts": {
+    "build:ui": "esbuild ui-src/bridge-entry.js --bundle --minify --format=iife --outfile=static/stochcraft/jira-bar.js"
+  }
+}
