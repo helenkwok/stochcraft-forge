@@ -196,9 +196,32 @@ export const handler = resolver.getDefinitions();
 export async function forecastAction(payload) {
   const input = payload || {};
   const r = await forecast({ project: input.project, from: input.from, to: input.to, demand: input.demand, capacity: input.people });
+  const n = (x, d) => Number(x).toFixed(d);
+  const h = (days) => `${n(days * 24, 1)} h`;
+  // Every number the agent should quote, already rounded and written out: it copies these and calculates nothing.
+  const table = r.scenarios.map((s) => ({
+    scenario: s.name,
+    issuesPerDay: n(s.arrivalPerDay, 1),
+    teamBusy: `${n(s.utilisation * 100, 0)}%`,
+    peopleWorkingAtOnce: String(s.people),
+    waitForAPerson: h(s.queueDays),
+    pickupDelay: h(s.pickupDays),
+    totalWait: h(s.waitDays),
+    createdToResolved: `${n(s.inSystemDays, 2)} days`,
+  }));
   return {
-    project: r.flow.project, window: `${r.flow.from} to ${r.flow.to}`,
-    jira: { createdPerDay: r.flow.arrivalPerDay, resolvedPerDay: r.flow.throughputPerDay, waitBeforeWorkDays: r.flow.queueDays.mean, inProgressDays: r.flow.serviceDays.mean, createdToResolvedDays: r.flow.leadDays.mean },
-    scenarios: r.scenarios, pickupDelayDays: r.pickupDays, assumptions: r.assumptions, summary: r.summary,
+    project: r.flow.project,
+    window: `${r.flow.from} to ${r.flow.to}`,
+    copyTheseValuesExactly: {
+      scenarioTable: table,
+      jiraToday: {
+        issuesCreatedPerDay: n(r.flow.arrivalPerDay, 1),
+        issuesResolvedPerDay: n(r.flow.throughputPerDay, 1),
+        waitBeforeWork: h(r.flow.queueDays.mean),
+        timeInProgress: `${n(r.flow.serviceDays.mean, 2)} days`,
+        createdToResolved: `${n(r.flow.leadDays.mean, 2)} days`,
+      },
+    },
+    assumptions: r.assumptions,
   };
 }
