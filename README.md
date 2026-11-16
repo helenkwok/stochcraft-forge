@@ -6,6 +6,10 @@ A Forge app (Jira project page) that reads a project's issue history and shows w
 
 The panel shows StochCraft's browser app, with a bar above it. Give it a project key and a date range and press Forecast. A Forge function reads the project's resolved issues with their status history (as the person viewing the page, scope `read:jira-work`), works out how often issues arrive and how long they stay In Progress, builds a queue model from that, runs it in StochCraft's engine and shows today and a what-if (more demand). It then prints what Jira shows next to what the model gives, so you can see how far to trust it.
 
+## The Rovo agent
+
+`Flow forecaster` is a Rovo agent (module `rovo:agent`) with one action, `forecast-flow`, that runs the same forecast and returns the numbers for the agent to explain: ask it "What happens to waiting times if demand grows 20 percent?" and give it a project key. The agent is told to report only what the action returns and to always state the assumptions.
+
 ## How it works
 
 - The engine runs inside the Forge function: the WASI build of `stochcraft-cli` (built by the "CLI on WASI" workflow of helenkwok/StochCraft) is embedded and run with `node:wasi`, no native code and no threads.

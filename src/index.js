@@ -191,3 +191,14 @@ resolver.define('forecast', ({ payload }) => forecast(payload || {}));
 resolver.define('simulate', () => probe());
 
 export const handler = resolver.getDefinitions();
+
+// The Rovo agent's action: the same forecast, returned as plain data for the agent to explain.
+export async function forecastAction(payload) {
+  const input = payload || {};
+  const r = await forecast({ project: input.project, from: input.from, to: input.to, demand: input.demand, capacity: input.people });
+  return {
+    project: r.flow.project, window: `${r.flow.from} to ${r.flow.to}`,
+    jira: { createdPerDay: r.flow.arrivalPerDay, resolvedPerDay: r.flow.throughputPerDay, waitBeforeWorkDays: r.flow.queueDays.mean, inProgressDays: r.flow.serviceDays.mean, createdToResolvedDays: r.flow.leadDays.mean },
+    scenarios: r.scenarios, pickupDelayDays: r.pickupDays, assumptions: r.assumptions, summary: r.summary,
+  };
+}

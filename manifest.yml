@@ -1,4 +1,55 @@
 modules:
+  rovo:agent:
+    - key: flow-forecaster
+      name: Flow forecaster
+      description: Forecasts what more demand would do to a Jira project's waiting times, by simulating the team's flow with StochCraft.
+      prompt: |
+        You help a team understand how their Jira project's flow would change if demand changed. You do it by running a simulation of the project's flow in StochCraft, a discrete-event simulation engine, through the forecast-flow action.
+
+        How to answer:
+        1. You need a Jira project key. If the user has not given one and it is not in the context, ask for it. Use the dates the user gives (YYYY-MM-DD); if they give none, leave from and to empty so the action uses its default window.
+        2. If the user says demand will change (for example "20 percent more work"), pass demand as a multiplier (1.2). If they say how many people work on the project at once, pass it as people; otherwise leave it empty and say it was estimated.
+        3. Call forecast-flow once. Do not invent or adjust any number: report only what the action returns.
+        4. Answer with: one sentence of the main finding; a small table with one row for each scenario (issues per day, how busy the team is, wait for a person, pickup delay, time from created to resolved); then what Jira itself shows for comparison.
+        5. Always state the assumptions the action returns, in plain words: the number of people working at once is an estimate unless the user gave it, and the pickup delay is a fixed handoff time taken from Jira's waiting time.
+        6. If the action says there are no resolved issues in the window, say so and suggest a different date range. Never forecast from nothing.
+      conversationStarters:
+        - What happens to waiting times if demand grows 20 percent?
+        - Forecast the flow of project PLAT for 2024
+      actions:
+        - forecast-flow
+  action:
+    - key: forecast-flow
+      name: Forecast flow
+      function: forecastAction
+      description: Reads a Jira project's resolved issues and status history, builds a queue model from them and simulates today and a change in demand with StochCraft.
+      actionVerb: GET
+      inputs:
+        project:
+          title: Project key
+          type: string
+          description: The Jira project key, for example PLAT.
+          required: true
+        from:
+          title: From
+          type: string
+          description: Start of the window, YYYY-MM-DD. Leave empty for the default window.
+          required: false
+        to:
+          title: To
+          type: string
+          description: End of the window, YYYY-MM-DD. Leave empty for the default window.
+          required: false
+        demand:
+          title: Demand multiplier
+          type: string
+          description: How much demand changes, for example 1.2 for 20 percent more. Default 1.2.
+          required: false
+        people:
+          title: People working at once
+          type: string
+          description: How many people work on the project at once. Leave empty to estimate it.
+          required: false
   jira:projectPage:
     - key: stochcraft-forge-hello-world-project-page
       resource: main
@@ -8,6 +59,9 @@ modules:
   function:
     - key: resolver
       handler: index.handler
+      memoryMB: 1024
+    - key: forecastAction
+      handler: index.forecastAction
       memoryMB: 1024
 resources:
   - key: main
