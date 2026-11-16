@@ -222,6 +222,12 @@ export async function forecastAction(payload) {
         createdToResolved: `${n(r.flow.leadDays.mean, 2)} days`,
       },
     },
+    warnings: [
+      ...(r.flow.throughputPerDay < 0.9 * r.flow.arrivalPerDay
+        ? [`In this window Jira shows fewer issues resolved (${n(r.flow.throughputPerDay, 1)} a day) than created (${n(r.flow.arrivalPerDay, 1)} a day). Issues may be stuck unresolved or the window may include a period when nothing was resolved. The model uses the issues that were resolved, so the real waits could be longer than forecast.`]
+        : []),
+      ...(r.flow.sampled < 50 ? [`Only ${r.flow.sampled} resolved issues were available to learn from, so the forecast is rough.`] : []),
+    ],
     assumptions: r.assumptions,
   };
 }
