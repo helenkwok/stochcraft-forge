@@ -194,6 +194,20 @@ async function forecast(payload) {
     const model = buildModel({ ...base, demand: d, pickupDays, name: `${flow.project} ${name}` });
     scenarios.push({ name, ...scenarioResult(model, await runModel(wasm, model)) });
   }
+  // What breaks first: raise demand until the team saturates. Saturation is where the people at once are busy 100% of the
+  // time (arrivals x work time = people); a queue then grows without bound. Between today and that point, a short sweep
+  // (6 replications each, to stay inside the function time limit) shows where waiting for a person gets long.
+  const rhoToday = (flow.arrivalPerDay * flow.serviceDays.mean) / people;
+  const strain = { rhoToday, saturationDemand: 1 / rhoToday, saturationPerDay: people / flow.serviceDays.mean, workDays: flow.serviceDays.mean, points: [] };
+  for (const rho of [0.75, 0.85, 0.92, 0.97]) {
+    const d = rho / rhoToday;
+    if (d <= 1.02) continue;
+    const model = buildModel({ ...base, demand: d, pickupDays, name: `${flow.project} Demand x${d.toFixed(2)}` });
+    const r = scenarioResult(model, await runModel(wasm, model, 6));
+    strain.points.push({ demand: d, perDay: r.arrivalPerDay, utilisation: r.utilisation, queueDays: r.queueDays, ciQueueDays: r.ci.queueDays });
+  }
+  strain.firstBusy85 = strain.points.find((x) => x.utilisation >= 0.85) || null;
+  strain.firstWaitLongerThanWork = strain.points.find((x) => x.queueDays > flow.serviceDays.mean) || null;
   const diff = compare(scenarios[0], scenarios[1]);
   const f = (x, n = 2) => (x == null ? 'n/a' : Number(x).toFixed(n));
   const h = (days) => f(days * 24, 1) + ' h';
@@ -202,9 +216,12 @@ async function forecast(payload) {
   const dline = diff.queueDays && diff.utilisation && diff.inSystemDays
     ? `${scenarios[1].name} compared with Today (paired, same random numbers): busy ${diff.utilisation.mean >= 0 ? '+' : ''}${f(diff.utilisation.mean * 100, 1)} points ±${f(diff.utilisation.half * 100, 1)}, wait for a person ${diff.queueDays.mean >= 0 ? '+' : ''}${f(diff.queueDays.mean * 1440, 1)} min ±${f(diff.queueDays.half * 1440, 1)}, created to resolved ${diff.inSystemDays.mean >= 0 ? '+' : ''}${f(diff.inSystemDays.mean * 1440, 1)} min ±${f(diff.inSystemDays.half * 1440, 1)}. A difference larger than its ± is real, not noise.`
     : '';
+  const sline = `What breaks first: the team saturates at ${f(strain.saturationDemand, 2)}x today's demand (${f(strain.saturationPerDay, 1)} issues/day with ${people} working at once, each issue taking ${f(strain.workDays, 2)} days of work); past that the queue only grows. ` +
+    (strain.points.length ? 'On the way: ' + strain.points.map((x) => `x${f(x.demand, 2)} (${f(x.perDay, 1)}/day): busy ${f(x.utilisation * 100, 0)}%, wait for a person ${h(x.queueDays)} ±${f(x.ciQueueDays * 24, 1)} h`).join('; ') + '. ' : 'Today is already at that limit. ') +
+    (strain.firstWaitLongerThanWork ? `Issues first wait longer for a person than the work itself takes at about x${f(strain.firstWaitLongerThanWork.demand, 2)}.` : 'Within the range tested waiting for a person stays shorter than the work itself.');
   const check = `Check against Jira today: wait ${h(flow.queueDays.mean)} (model ${h(scenarios[0].waitDays)}), created to resolved ${f(flow.leadDays.mean)} days (model ${f(scenarios[0].inSystemDays)}).`;
   return {
-    flow, scenarios, diff, plain, pickupDays,
+    flow, scenarios, diff, strain, plain, pickupDays,
     assumptions: [
       `People working at once is not in Jira: ${payload.capacity ? 'you set it to ' + people : 'estimated as ' + people + ' so that today runs at about 70 percent busy'}.`,
       `Jira's wait before work (${h(flow.queueDays.mean)}) is longer than queueing for a person explains (${h(plain.queueDays)}), so the rest, ${h(pickupDays)}, is modelled as a fixed pickup delay that more demand does not change.`,
@@ -212,7 +229,7 @@ async function forecast(payload) {
       'Issues take as long as the sampled In Progress times (log-normal with their mean and spread), and arrive at random at the rate Jira shows.',
     ],
     runMs: Date.now() - t0,
-    summary: flow.summary + '\n' + scenarios.map(line).join('\n') + (dline ? '\n' + dline : '') + '\n' + check + ' (' + scenarios[0].replications + ' replications each; ' + (Date.now() - t0) + ' ms)',
+    summary: flow.summary + '\n' + scenarios.map(line).join('\n') + (dline ? '\n' + dline : '') + '\n' + sline + '\n' + check + ' (' + scenarios[0].replications + ' replications each; ' + (Date.now() - t0) + ' ms)',
   };
 }
 
@@ -250,12 +267,20 @@ export async function forecastAction(payload) {
         howToRead: 'A difference larger than its ± is real; one smaller than its ± cannot be told apart from noise.',
       }
     : null;
+  const whatBreaksFirst = {
+    saturatesAt: `${n(r.strain.saturationDemand, 2)}x today's demand (${n(r.strain.saturationPerDay, 1)} issues a day)`,
+    meaning: `With ${r.scenarios[0].people} people working at once and ${n(r.strain.workDays, 2)} days of work per issue, the team is busy 100% of the time at that demand. Beyond it the queue grows without limit.`,
+    steps: r.strain.points.map((x) => ({ demand: `${n(x.demand, 2)}x (${n(x.perDay, 1)} issues a day)`, teamBusy: `${n(x.utilisation * 100, 0)}%`, waitForAPerson: `${h(x.queueDays)} (±${n(x.ciQueueDays * 24, 1)} h)` })),
+    firstTimeWaitingIsLongerThanTheWork: r.strain.firstWaitLongerThanWork ? `at about ${n(r.strain.firstWaitLongerThanWork.demand, 2)}x` : 'not reached before saturation in the steps tested',
+    note: 'Steps use 6 replications each, so their ± is wider than in the table; saturation is exact arithmetic, not simulated.',
+  };
   return {
     project: r.flow.project,
     window: `${r.flow.from} to ${r.flow.to}`,
     copyTheseValuesExactly: {
       scenarioTable: table,
       pairedDifference: sameStreams,
+      whatBreaksFirst,
       jiraToday: {
         issuesCreatedPerDay: n(r.flow.arrivalPerDay, 1),
         issuesResolvedPerDay: n(r.flow.throughputPerDay, 1),
