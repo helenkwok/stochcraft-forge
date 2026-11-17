@@ -16,3 +16,5 @@ for s in $(grep -o 'snippets/[^"]*\.js' "$tmp/index.html" | sort -u); do
 done
 # index.html names the hashed files: point this app's copy at the ones just fetched.
 sed -i.bak -E "s#stochcraft-web-[0-9a-f]+(_bg\.wasm|\.js)#${js%.js}\1#g" static/stochcraft/index.html && rm -f static/stochcraft/index.html.bak
+# The preload links carry integrity hashes of the files they named: after the swap they would not match, and the browser reports an error. They are only hints, so drop them.
+sed -i.bak -E 's# integrity="[^"]*"##g' static/stochcraft/index.html && rm -f static/stochcraft/index.html.bak

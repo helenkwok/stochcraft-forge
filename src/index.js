@@ -134,8 +134,10 @@ resolver.define('jiraFlow', ({ payload }) => jiraFlow(payload || {}));
 
 // What a team's flow would do: read the project, build the queue model from it, run it in StochCraft's engine
 // (the WASI build) for what the team does today and for more demand, and report both next to what Jira shows.
+const hw = (m) => (m && Number.isFinite(m.half_width) ? m.half_width : null);
 const scenarioResult = (model, results) => {
   const el = (id) => results.elements.find((e) => e.id === id)?.metrics || {};
+  const vals = (id) => results.values?.[id] || {};
   const work = el('work'), done = el('done');
   const timeKey = Object.keys(done).find((k) => /time_in_system/.test(k));
   const pickup = model.elements.find((e) => e.id === 'pickup');
@@ -149,9 +151,31 @@ const scenarioResult = (model, results) => {
     waitDays: (work.mean_wait?.mean ?? 0) + (pickup ? pickup.duration.value : 0),
     queueLength: work.mean_queue_length?.mean,
     inSystemDays: timeKey ? done[timeKey].mean : null,
+    // 95% half-widths over the replications
+    ci: { utilisation: hw(work.utilisation), queueDays: hw(work.mean_wait), queueLength: hw(work.mean_queue_length), inSystemDays: timeKey ? hw(done[timeKey]) : null },
+    // one value per replication, for paired comparison between scenarios
+    perRep: { utilisation: vals('work').utilisation, queueDays: vals('work').mean_wait, inSystemDays: timeKey ? vals('done')[timeKey] : undefined },
     replications: results.replications,
   };
 };
+
+// Two-sided 95% t quantile for n-1 degrees of freedom (n replications).
+const T95 = { 1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.16, 14: 2.145, 15: 2.131, 19: 2.093, 29: 2.045, 49: 2.01 };
+const tq = (df) => T95[df] ?? (df > 49 ? 1.98 : T95[Math.max(...Object.keys(T95).map(Number).filter((k) => k <= df))]);
+// Paired difference b - a: replication i of both scenarios uses the same random stream (same seed and index), so the
+// differences cancel most of the noise. Returns the mean difference with its 95% half-width.
+function paired(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length < 2) return null;
+  const d = a.map((x, i) => b[i] - x);
+  const n = d.length, mean = d.reduce((x, y) => x + y, 0) / n;
+  const sd = Math.sqrt(d.reduce((x, y) => x + (y - mean) ** 2, 0) / (n - 1));
+  return { mean, half: tq(n - 1) * sd / Math.sqrt(n) };
+}
+const compare = (a, b) => ({
+  utilisation: paired(a.perRep.utilisation, b.perRep.utilisation),
+  queueDays: paired(a.perRep.queueDays, b.perRep.queueDays),
+  inSystemDays: paired(a.perRep.inSystemDays, b.perRep.inSystemDays),
+});
 
 async function forecast(payload) {
   const flow = await jiraFlow(payload);
@@ -170,19 +194,25 @@ async function forecast(payload) {
     const model = buildModel({ ...base, demand: d, pickupDays, name: `${flow.project} ${name}` });
     scenarios.push({ name, ...scenarioResult(model, await runModel(wasm, model)) });
   }
+  const diff = compare(scenarios[0], scenarios[1]);
   const f = (x, n = 2) => (x == null ? 'n/a' : Number(x).toFixed(n));
   const h = (days) => f(days * 24, 1) + ' h';
-  const line = (s) => `${s.name}: ${f(s.arrivalPerDay, 1)} issues/day, ${s.people} working at once: busy ${f(s.utilisation * 100, 0)}%, waits ${h(s.waitDays)} (${h(s.queueDays)} for a person + ${h(s.pickupDays)} pickup), ${f(s.inSystemDays, 2)} days created to resolved.`;
+  const pm = (x, n) => (x == null ? '' : ' ±' + f(x, n));
+  const line = (s) => `${s.name}: ${f(s.arrivalPerDay, 1)} issues/day, ${s.people} working at once: busy ${f(s.utilisation * 100, 0)}%${pm(s.ci.utilisation * 100, 1)}, waits ${h(s.waitDays)} (±${f(s.ci.queueDays * 1440, 1)} min) (${h(s.queueDays)} for a person + ${h(s.pickupDays)} pickup), ${f(s.inSystemDays, 2)} days (±${f(s.ci.inSystemDays * 24, 1)} h) created to resolved.`;
+  const dline = diff.queueDays && diff.utilisation && diff.inSystemDays
+    ? `${scenarios[1].name} compared with Today (paired, same random numbers): busy ${diff.utilisation.mean >= 0 ? '+' : ''}${f(diff.utilisation.mean * 100, 1)} points ±${f(diff.utilisation.half * 100, 1)}, wait for a person ${diff.queueDays.mean >= 0 ? '+' : ''}${f(diff.queueDays.mean * 1440, 1)} min ±${f(diff.queueDays.half * 1440, 1)}, created to resolved ${diff.inSystemDays.mean >= 0 ? '+' : ''}${f(diff.inSystemDays.mean * 24, 1)} h ±${f(diff.inSystemDays.half * 24, 1)}. A difference larger than its ± is real, not noise.`
+    : '';
   const check = `Check against Jira today: wait ${h(flow.queueDays.mean)} (model ${h(scenarios[0].waitDays)}), created to resolved ${f(flow.leadDays.mean)} days (model ${f(scenarios[0].inSystemDays)}).`;
   return {
-    flow, scenarios, plain, pickupDays,
+    flow, scenarios, diff, plain, pickupDays,
     assumptions: [
       `People working at once is not in Jira: ${payload.capacity ? 'you set it to ' + people : 'estimated as ' + people + ' so that today runs at about 70 percent busy'}.`,
       `Jira's wait before work (${h(flow.queueDays.mean)}) is longer than queueing for a person explains (${h(plain.queueDays)}), so the rest, ${h(pickupDays)}, is modelled as a fixed pickup delay that more demand does not change.`,
+      `Every figure is the mean of ${scenarios[0].replications} replications with its 95% interval (±). Today and the other scenario use the same random numbers replication by replication, so their difference is much sharper than the two intervals suggest.`,
       'Issues take as long as the sampled In Progress times (log-normal with their mean and spread), and arrive at random at the rate Jira shows.',
     ],
     runMs: Date.now() - t0,
-    summary: flow.summary + '\n' + scenarios.map(line).join('\n') + '\n' + check + ' (' + scenarios[0].replications + ' replications each; ' + (Date.now() - t0) + ' ms)',
+    summary: flow.summary + '\n' + scenarios.map(line).join('\n') + (dline ? '\n' + dline : '') + '\n' + check + ' (' + scenarios[0].replications + ' replications each; ' + (Date.now() - t0) + ' ms)',
   };
 }
 
@@ -202,18 +232,30 @@ export async function forecastAction(payload) {
   const table = r.scenarios.map((s) => ({
     scenario: s.name,
     issuesPerDay: n(s.arrivalPerDay, 1),
-    teamBusy: `${n(s.utilisation * 100, 0)}%`,
+    teamBusy: `${n(s.utilisation * 100, 0)}% (±${n(s.ci.utilisation * 100, 1)} points)`,
     peopleWorkingAtOnce: String(s.people),
-    waitForAPerson: h(s.queueDays),
+    waitForAPerson: `${h(s.queueDays)} (±${n(s.ci.queueDays * 1440, 1)} min)`,
     pickupDelay: h(s.pickupDays),
     totalWait: h(s.waitDays),
-    createdToResolved: `${n(s.inSystemDays, 2)} days`,
+    createdToResolved: `${n(s.inSystemDays, 2)} days (±${n(s.ci.inSystemDays * 24, 1)} h)`,
   }));
+  const sg = (x) => (x >= 0 ? '+' : '-');
+  const d = r.diff;
+  const sameStreams = d.utilisation && d.queueDays && d.inSystemDays
+    ? {
+        comparison: `${r.scenarios[1].name} compared with Today, replication by replication with the same random numbers`,
+        teamBusy: `${sg(d.utilisation.mean)}${n(Math.abs(d.utilisation.mean) * 100, 1)} points (±${n(d.utilisation.half * 100, 1)})`,
+        waitForAPerson: `${sg(d.queueDays.mean)}${n(Math.abs(d.queueDays.mean) * 1440, 1)} min (±${n(d.queueDays.half * 1440, 1)})`,
+        createdToResolved: `${sg(d.inSystemDays.mean)}${n(Math.abs(d.inSystemDays.mean) * 24, 1)} h (±${n(d.inSystemDays.half * 24, 1)})`,
+        howToRead: 'A difference larger than its ± is real; one smaller than its ± cannot be told apart from noise.',
+      }
+    : null;
   return {
     project: r.flow.project,
     window: `${r.flow.from} to ${r.flow.to}`,
     copyTheseValuesExactly: {
       scenarioTable: table,
+      pairedDifference: sameStreams,
       jiraToday: {
         issuesCreatedPerDay: n(r.flow.arrivalPerDay, 1),
         issuesResolvedPerDay: n(r.flow.throughputPerDay, 1),
