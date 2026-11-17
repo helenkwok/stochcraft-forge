@@ -198,9 +198,9 @@ async function forecast(payload) {
   const f = (x, n = 2) => (x == null ? 'n/a' : Number(x).toFixed(n));
   const h = (days) => f(days * 24, 1) + ' h';
   const pm = (x, n) => (x == null ? '' : ' ±' + f(x, n));
-  const line = (s) => `${s.name}: ${f(s.arrivalPerDay, 1)} issues/day, ${s.people} working at once: busy ${f(s.utilisation * 100, 0)}%${pm(s.ci.utilisation * 100, 1)}, waits ${h(s.waitDays)} (±${f(s.ci.queueDays * 1440, 1)} min) (${h(s.queueDays)} for a person + ${h(s.pickupDays)} pickup), ${f(s.inSystemDays, 2)} days (±${f(s.ci.inSystemDays * 24, 1)} h) created to resolved.`;
+  const line = (s) => `${s.name}: ${f(s.arrivalPerDay, 1)} issues/day, ${s.people} working at once: busy ${f(s.utilisation * 100, 0)}%${pm(s.ci.utilisation * 100, 1)}, waits ${h(s.waitDays)} (±${f(s.ci.queueDays * 1440, 1)} min) (${h(s.queueDays)} for a person + ${h(s.pickupDays)} pickup), ${f(s.inSystemDays, 2)} days (±${f(s.ci.inSystemDays * 1440, 1)} min) created to resolved.`;
   const dline = diff.queueDays && diff.utilisation && diff.inSystemDays
-    ? `${scenarios[1].name} compared with Today (paired, same random numbers): busy ${diff.utilisation.mean >= 0 ? '+' : ''}${f(diff.utilisation.mean * 100, 1)} points ±${f(diff.utilisation.half * 100, 1)}, wait for a person ${diff.queueDays.mean >= 0 ? '+' : ''}${f(diff.queueDays.mean * 1440, 1)} min ±${f(diff.queueDays.half * 1440, 1)}, created to resolved ${diff.inSystemDays.mean >= 0 ? '+' : ''}${f(diff.inSystemDays.mean * 24, 1)} h ±${f(diff.inSystemDays.half * 24, 1)}. A difference larger than its ± is real, not noise.`
+    ? `${scenarios[1].name} compared with Today (paired, same random numbers): busy ${diff.utilisation.mean >= 0 ? '+' : ''}${f(diff.utilisation.mean * 100, 1)} points ±${f(diff.utilisation.half * 100, 1)}, wait for a person ${diff.queueDays.mean >= 0 ? '+' : ''}${f(diff.queueDays.mean * 1440, 1)} min ±${f(diff.queueDays.half * 1440, 1)}, created to resolved ${diff.inSystemDays.mean >= 0 ? '+' : ''}${f(diff.inSystemDays.mean * 1440, 1)} min ±${f(diff.inSystemDays.half * 1440, 1)}. A difference larger than its ± is real, not noise.`
     : '';
   const check = `Check against Jira today: wait ${h(flow.queueDays.mean)} (model ${h(scenarios[0].waitDays)}), created to resolved ${f(flow.leadDays.mean)} days (model ${f(scenarios[0].inSystemDays)}).`;
   return {
@@ -237,7 +237,7 @@ export async function forecastAction(payload) {
     waitForAPerson: `${h(s.queueDays)} (±${n(s.ci.queueDays * 1440, 1)} min)`,
     pickupDelay: h(s.pickupDays),
     totalWait: h(s.waitDays),
-    createdToResolved: `${n(s.inSystemDays, 2)} days (±${n(s.ci.inSystemDays * 24, 1)} h)`,
+    createdToResolved: `${n(s.inSystemDays, 2)} days (±${n(s.ci.inSystemDays * 1440, 1)} min)`,
   }));
   const sg = (x) => (x >= 0 ? '+' : '-');
   const d = r.diff;
@@ -246,7 +246,7 @@ export async function forecastAction(payload) {
         comparison: `${r.scenarios[1].name} compared with Today, replication by replication with the same random numbers`,
         teamBusy: `${sg(d.utilisation.mean)}${n(Math.abs(d.utilisation.mean) * 100, 1)} points (±${n(d.utilisation.half * 100, 1)})`,
         waitForAPerson: `${sg(d.queueDays.mean)}${n(Math.abs(d.queueDays.mean) * 1440, 1)} min (±${n(d.queueDays.half * 1440, 1)})`,
-        createdToResolved: `${sg(d.inSystemDays.mean)}${n(Math.abs(d.inSystemDays.mean) * 24, 1)} h (±${n(d.inSystemDays.half * 24, 1)})`,
+        createdToResolved: `${sg(d.inSystemDays.mean)}${n(Math.abs(d.inSystemDays.mean) * 1440, 1)} min (±${n(d.inSystemDays.half * 1440, 1)})`,
         howToRead: 'A difference larger than its ± is real; one smaller than its ± cannot be told apart from noise.',
       }
     : null;
