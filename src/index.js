@@ -78,7 +78,8 @@ const stats = (xs) => {
 };
 const fmt = (x) => (x == null ? 'n/a' : x.mean.toFixed(2) + ' (median ' + x.median.toFixed(2) + ', p85 ' + x.p85.toFixed(2) + ')');
 
-async function jiraFlow({ project, from, to }) {
+async function jiraFlow({ project, from, to }, prof) {
+  const tj = Date.now(); const tick = (l, t) => prof && prof.push([l, Date.now() - t]);
   const key = String(project || '').toUpperCase();
   from = from || '2024-01-01';
   to = to || '2024-09-01';
@@ -86,13 +87,15 @@ async function jiraFlow({ project, from, to }) {
   if (!DAY_RE.test(from) || !DAY_RE.test(to) || from >= to) throw new Error('Dates must be YYYY-MM-DD, from before to');
   const days = (Date.parse(to) - Date.parse(from)) / 86400000;
   const inWindow = (field) => `project = "${key}" AND ${field} >= "${from}" AND ${field} < "${to}"`;
-  const [arrived, resolved] = await Promise.all([
+  // the counts do not depend on the pages: ask for them alongside
+  const counts = Promise.all([
     jira(route`/rest/api/3/search/approximate-count`, { jql: inWindow('created') }),
     jira(route`/rest/api/3/search/approximate-count`, { jql: inWindow('resolved') }),
   ]);
   const queue = [], service = [], lead = [];
   let token, read = 0;
   while (read < MAX_ISSUES) {
+    const tp = Date.now();
     const page = await jira(route`/rest/api/3/search/jql`, {
       jql: inWindow('resolved') + ' ORDER BY resolved DESC',
       fields: ['created', 'resolutiondate'],
@@ -100,6 +103,7 @@ async function jiraFlow({ project, from, to }) {
       maxResults: Math.min(100, MAX_ISSUES - read),
       ...(token ? { nextPageToken: token } : {}),
     });
+    tick('jira page of ' + (page.issues || []).length, tp);
     for (const i of page.issues || []) {
       read += 1;
       const created = Date.parse(i.fields.created), done = Date.parse(i.fields.resolutiondate);
@@ -117,6 +121,8 @@ async function jiraFlow({ project, from, to }) {
     token = page.nextPageToken;
     if (!token || !(page.issues || []).length) break;
   }
+  const [arrived, resolved] = await counts;
+  tick('jira counts and pages', tj);
   const r = {
     project: key, from, to, days, sampled: read,
     arrivals: arrived.count, resolved: resolved.count,
@@ -178,21 +184,25 @@ const compare = (a, b) => ({
 });
 
 async function forecast(payload) {
-  const flow = await jiraFlow(payload);
+  const prof = []; const tf = Date.now();
+  const flow = await jiraFlow(payload, prof);
+  const run = async (label, model, reps) => { const timing = {}; const t = Date.now(); const res = await runModel(wasm, model, reps, timing); prof.push([`run ${label}${reps ? ' x' + reps : ''}`, Date.now() - t, timing]); return res; };
   if (!flow.serviceDays || !flow.queueDays || !(flow.arrivalPerDay > 0)) throw new Error('No resolved issues with an In Progress step in that window');
   const demand = Math.min(5, Math.max(0.1, Number(payload.demand) || 1.2));
   const people = Math.min(50, Math.max(1, Math.round(Number(payload.capacity) || 0) || defaultCapacity(flow.arrivalPerDay, flow.serviceDays.mean)));
   const base = { arrivalPerDay: flow.arrivalPerDay, serviceMean: flow.serviceDays.mean, serviceSd: flow.serviceDays.sd, capacity: people };
-  const wasm = Buffer.from(WASM_BASE64, 'base64');
+  const tw = Date.now();
+  const wasm = await WebAssembly.compile(Buffer.from(WASM_BASE64, 'base64'));
+  prof.push(['wasm decode and compile once', Date.now() - tw]);
   const t0 = Date.now();
   // 1. Capacity alone: how long would issues queue for a person? Jira shows a longer wait; the rest is a fixed pickup delay.
-  const plain = scenarioResult(buildModel({ ...base }), await runModel(wasm, buildModel({ ...base })));
+  const plain = scenarioResult(buildModel({ ...base }), await run('capacity only', buildModel({ ...base }), 6));
   const pickupDays = Math.max(0, flow.queueDays.mean - plain.queueDays);
   // 2. Today and more demand, both with that pickup delay.
   const scenarios = [];
   for (const [name, d] of [['Today', 1], [`Demand x${demand}`, demand]]) {
     const model = buildModel({ ...base, demand: d, pickupDays, name: `${flow.project} ${name}` });
-    scenarios.push({ name, ...scenarioResult(model, await runModel(wasm, model)) });
+    scenarios.push({ name, ...scenarioResult(model, await run(name, model)) });
   }
   // What breaks first: raise demand until the team saturates. Saturation is where the people at once are busy 100% of the
   // time (arrivals x work time = people); a queue then grows without bound. Between today and that point, a short sweep
@@ -203,7 +213,7 @@ async function forecast(payload) {
     const d = rho / rhoToday;
     if (d <= 1.02) continue;
     const model = buildModel({ ...base, demand: d, pickupDays, name: `${flow.project} Demand x${d.toFixed(2)}` });
-    const r = scenarioResult(model, await runModel(wasm, model, 6));
+    const r = scenarioResult(model, await run('sweep x' + d.toFixed(2), model, 6));
     strain.points.push({ demand: d, perDay: r.arrivalPerDay, utilisation: r.utilisation, queueDays: r.queueDays, ciQueueDays: r.ci.queueDays });
   }
   strain.firstBusy85 = strain.points.find((x) => x.utilisation >= 0.85) || null;
@@ -229,7 +239,8 @@ async function forecast(payload) {
       'Issues take as long as the sampled In Progress times (log-normal with their mean and spread), and arrive at random at the rate Jira shows.',
     ],
     runMs: Date.now() - t0,
-    summary: flow.summary + '\n' + scenarios.map(line).join('\n') + (dline ? '\n' + dline : '') + '\n' + sline + '\n' + check + ' (' + scenarios[0].replications + ' replications each; ' + (Date.now() - t0) + ' ms)',
+    profile: prof, totalMs: Date.now() - tf,
+    summary: flow.summary + '\n' + scenarios.map(line).join('\n') + (dline ? '\n' + dline : '') + '\n' + sline + '\n' + check + ' (' + scenarios[0].replications + ' replications each; ' + (Date.now() - t0) + ' ms)' ,
   };
 }
 

@@ -41,7 +41,8 @@ export function defaultCapacity(arrivalPerDay, serviceMean, target = 0.7) {
 }
 
 // Run the model with the WASI build of stochcraft-cli. stdout goes to a file, so the JSON lines can be read back.
-export async function runModel(wasmBytes, model, replications) {
+export async function runModel(wasmBytes, model, replications, timing) {
+  const T0 = Date.now(); const lap = (k) => { if (timing) timing[k] = Date.now() - T0; };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-'));
   const script = [
     { command: 'model.set', params: { model } },
@@ -60,8 +61,10 @@ export async function runModel(wasmBytes, model, replications) {
       stderr: errFd,
       returnOnExit: true,
     });
-    const instance = await WebAssembly.instantiate(await WebAssembly.compile(wasmBytes), wasi.getImportObject());
-    const exit = wasi.start(instance);
+    // a WebAssembly.Module passed in is reused: compiling the 4.8 MB program takes 0.2 to 0.5 s each time
+    const mod = wasmBytes instanceof WebAssembly.Module ? wasmBytes : await WebAssembly.compile(wasmBytes); lap('compile');
+    const instance = await WebAssembly.instantiate(mod, wasi.getImportObject()); lap('instantiate');
+    const exit = wasi.start(instance); lap('run');
     const lines = fs.readFileSync(outPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
     const err = fs.readFileSync(path.join(dir, 'stderr.txt'), 'utf8').slice(0, 300);
     const last = lines[lines.length - 1];
