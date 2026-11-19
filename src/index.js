@@ -7,6 +7,7 @@ import path from 'path';
 import { WASI } from 'wasi';
 import { WASM_BASE64, MM1 } from './wasm-data';
 import { buildModel, defaultCapacity, runModel } from './flow-model';
+import { fitFamilies } from './fit';
 
 const resolver = new Resolver();
 
@@ -128,6 +129,7 @@ async function jiraFlow({ project, from, to }, prof) {
     arrivals: arrived.count, resolved: resolved.count,
     arrivalPerDay: arrived.count / days, throughputPerDay: resolved.count / days,
     queueDays: stats(queue), serviceDays: stats(service), leadDays: stats(lead),
+    serviceSample: service,
   };
   r.summary =
     `${key} ${from} to ${to} (${days} days): ${r.arrivals} created (${r.arrivalPerDay.toFixed(2)}/day), ${r.resolved} resolved (${r.throughputPerDay.toFixed(2)}/day). ` +
@@ -222,22 +224,28 @@ async function forecast(payload) {
     scenarios.push({ name, ...scenarioResult(model, await run(name, model)) });
   }
   const diff = compare(scenarios[0], scenarios[1]);
+  const fit = fitFamilies(flow.serviceSample);
+  const fitLine = fit
+    ? `Work times (${fit.n} issues): ${fit.best} fits best; gap in AIC to the others: ${fit.ranking.slice(1).map((o) => o.family + ' +' + f(o.deltaAic, 0)).join(', ')}. The slowest 15% take longer than ${f(fit.observedP85, 2)} days (log-normal says ${f(fit.lognormalP85, 2)}).`
+    : '';
+  const lognormalGap = fit ? fit.ranking.find((o) => o.family === 'log-normal')?.deltaAic ?? 0 : 0;
   const line = (s) => `${s.name}: ${f(s.arrivalPerDay, 1)} issues/day, ${s.people} working at once: busy ${f(s.utilisation * 100, 0)}%${pm(s.ci.utilisation * 100, 1)}, waits ${h(s.waitDays)} (±${f(s.ci.queueDays * 1440, 1)} min) (${h(s.queueDays)} for a person + ${h(s.pickupDays)} pickup), ${f(s.inSystemDays, 2)} days (±${f(s.ci.inSystemDays * 1440, 1)} min) created to resolved.`;
   const dline = diff.queueDays && diff.utilisation && diff.inSystemDays
     ? `${scenarios[1].name} compared with Today (paired, same random numbers): busy ${diff.utilisation.mean >= 0 ? '+' : ''}${f(diff.utilisation.mean * 100, 1)} points ±${f(diff.utilisation.half * 100, 1)}, wait for a person ${diff.queueDays.mean >= 0 ? '+' : ''}${f(diff.queueDays.mean * 1440, 1)} min ±${f(diff.queueDays.half * 1440, 1)}, created to resolved ${diff.inSystemDays.mean >= 0 ? '+' : ''}${f(diff.inSystemDays.mean * 1440, 1)} min ±${f(diff.inSystemDays.half * 1440, 1)}. A difference larger than its ± is real, not noise.`
     : '';
   const check = `Check against Jira today: wait ${h(flow.queueDays.mean)} (model ${h(scenarios[0].waitDays)}), created to resolved ${f(flow.leadDays.mean)} days (model ${f(scenarios[0].inSystemDays)}).`;
   return {
-    flow, scenarios, diff, plain, pickupDays,
+    flow, scenarios, diff, plain, pickupDays, fit,
     assumptions: [
       `People working at once is not in Jira: ${payload.capacity ? 'you set it to ' + people : 'estimated as ' + people + ' so that today runs at about 70 percent busy'}.`,
       `Jira's wait before work (${h(flow.queueDays.mean)}) is longer than queueing for a person explains (${h(plain.queueDays)}), so the rest, ${h(pickupDays)}, is modelled as a fixed pickup delay that more demand does not change.`,
       `Every figure is the mean of ${scenarios[0].replications} replications with its 95% interval (±). Today and the other scenario use the same random numbers replication by replication, so their difference is much sharper than the two intervals suggest.`,
       'Issues take as long as the sampled In Progress times (log-normal with their mean and spread), and arrive at random at the rate Jira shows.',
+      ...(fit && lognormalGap > 10 ? [`The model assumes log-normal work times, but ${fit.best} fits these times clearly better (AIC gap ${f(lognormalGap, 0)}), so waits near saturation may be misjudged.`] : []),
     ],
     runMs: Date.now() - t0,
     profile: prof, totalMs: Date.now() - tf,
-    summary: flow.summary + '\n' + scenarios.map(line).join('\n') + (dline ? '\n' + dline : '') + '\n' + check + ' (' + scenarios[0].replications + ' replications each; ' + (Date.now() - t0) + ' ms)',
+    summary: flow.summary + '\n' + scenarios.map(line).join('\n') + (dline ? '\n' + dline : '') + (fitLine ? '\n' + fitLine : '') + '\n' + check + ' (' + scenarios[0].replications + ' replications each; ' + (Date.now() - t0) + ' ms)',
   };
 }
 
@@ -331,6 +339,15 @@ export async function forecastAction(payload) {
     copyTheseValuesExactly: {
       scenarioTable: table,
       pairedDifference: sameStreams,
+      workTimeFit: r.fit
+        ? {
+            issuesSampled: String(r.fit.n),
+            bestFit: r.fit.best,
+            gapInAicToTheOthers: r.fit.ranking.slice(1).map((o) => `${o.family} +${n(o.deltaAic, 0)}`).join(', '),
+            slowest15PercentTakeLongerThan: `${n(r.fit.observedP85, 2)} days (log-normal says ${n(r.fit.lognormalP85, 2)})`,
+            howToRead: 'The model assumes log-normal work times. A small AIC gap (under about 10) means the families cannot be told apart; a large gap means that family fits clearly better.',
+          }
+        : null,
       jiraToday: {
         issuesCreatedPerDay: n(r.flow.arrivalPerDay, 1),
         issuesResolvedPerDay: n(r.flow.throughputPerDay, 1),
