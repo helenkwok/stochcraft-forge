@@ -40,14 +40,11 @@ export function defaultCapacity(arrivalPerDay, serviceMean, target = 0.7) {
   return Math.max(1, Math.ceil((arrivalPerDay * serviceMean) / target));
 }
 
-// Run the model with the WASI build of stochcraft-cli. stdout goes to a file, so the JSON lines can be read back.
-export async function runModel(wasmBytes, model, replications, timing) {
+// Run engine commands (the list a `stochcraft-cli exec` script holds) with the WASI build of stochcraft-cli. stdout goes to a
+// file, so the JSON lines can be read back; the answer of the last command is returned.
+async function execCommands(wasmBytes, script, timing) {
   const T0 = Date.now(); const lap = (k) => { if (timing) timing[k] = Date.now() - T0; };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-'));
-  const script = [
-    { command: 'model.set', params: { model } },
-    { command: 'run', params: replications ? { replications } : {} },
-  ];
   fs.writeFileSync(path.join(dir, 'script.json'), JSON.stringify(script));
   const outPath = path.join(dir, 'stdout.txt');
   const outFd = fs.openSync(outPath, 'w');
@@ -61,7 +58,7 @@ export async function runModel(wasmBytes, model, replications, timing) {
       stderr: errFd,
       returnOnExit: true,
     });
-    // a WebAssembly.Module passed in is reused: compiling the 4.8 MB program takes 0.2 to 0.5 s each time
+    // a WebAssembly.Module passed in is reused: compiling the 5.8 MB program takes 0.2 to 0.5 s each time
     const mod = wasmBytes instanceof WebAssembly.Module ? wasmBytes : await WebAssembly.compile(wasmBytes); lap('compile');
     const instance = await WebAssembly.instantiate(mod, wasi.getImportObject()); lap('instantiate');
     const exit = wasi.start(instance); lap('run');
@@ -75,4 +72,15 @@ export async function runModel(wasmBytes, model, replications, timing) {
     fs.closeSync(errFd);
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// Run the model: `replications` overrides the model's own.
+export function runModel(wasmBytes, model, replications, timing) {
+  return execCommands(wasmBytes, [{ command: 'model.set', params: { model } }, { command: 'run', params: replications ? { replications } : {} }], timing);
+}
+
+// The engine's capacity table for the model, without running it: per station the load, a status (fine, congested above the
+// target, unstable at 100% or more) and the units that would bring it under the target (85% unless given).
+export async function capacityOf(wasmBytes, model, target) {
+  return execCommands(wasmBytes, [{ command: 'model.set', params: { model } }, { command: 'model.capacity', params: target ? { target } : {} }]);
 }

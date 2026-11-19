@@ -6,7 +6,7 @@ import os from 'os';
 import path from 'path';
 import { WASI } from 'wasi';
 import { WASM_BASE64, MM1 } from './wasm-data';
-import { buildModel, defaultCapacity, runModel } from './flow-model';
+import { buildModel, capacityOf, defaultCapacity, runModel } from './flow-model';
 import { fitFamilies } from './fit';
 
 const resolver = new Resolver();
@@ -205,7 +205,7 @@ async function setup(payload, prof) {
     prof.push([`run ${label}${reps ? ' x' + reps : ''}`, Date.now() - t, timing]);
     return res;
   };
-  return { flow, people, base, run };
+  return { flow, people, base, run, wasm };
 }
 
 // Call 1, what a team's flow would do: today and more demand, with the pickup delay Jira's wait implies, next to what Jira shows.
@@ -268,7 +268,7 @@ function erlangWait(a, c, workMean, workSd) {
 // A constant pickup delay does not change how long issues queue for a person, so the sweep leaves it out.
 async function strainReport(payload) {
   const prof = []; const tf = Date.now();
-  const { flow, people, base, run } = await setup(payload, prof);
+  const { flow, people, base, run, wasm } = await setup(payload, prof);
   const work = flow.serviceDays;
   const rhoToday = (flow.arrivalPerDay * work.mean) / people;
   const strain = { rhoToday, saturationDemand: 1 / rhoToday, saturationPerDay: people / work.mean, workDays: work.mean, people, points: [] };
@@ -278,14 +278,18 @@ async function strainReport(payload) {
     const model = buildModel({ ...base, demand: d, name: `${flow.project} Demand x${d.toFixed(2)}` });
     const r = scenarioResult(model, await run('x' + d.toFixed(2), model, 6));
     const q = erlangWait(r.arrivalPerDay * work.mean, people, work.mean, work.sd);
-    strain.points.push({ demand: d, perDay: r.arrivalPerDay, utilisation: r.utilisation, queueDays: r.queueDays, ciQueueDays: r.ci.queueDays, formulaQueueDays: q ? q.wqAC : null, formulaPWait: q ? q.pWait : null });
+    // StochCraft's own capacity check for this demand: status and the people that bring the station under 85%
+    const tc = Date.now(); const cap = await capacityOf(wasm, model); prof.push(['capacity x' + d.toFixed(2), Date.now() - tc]);
+    const st = cap.stations.find((x) => x.id === 'work');
+    strain.points.push({ demand: d, perDay: r.arrivalPerDay, utilisation: r.utilisation, queueDays: r.queueDays, ciQueueDays: r.ci.queueDays, formulaQueueDays: q ? q.wqAC : null, formulaPWait: q ? q.pWait : null, engineStatus: st?.status ?? null, peopleFor85: st?.units_for_target ?? null });
   }
   const ahead = strain.points.filter((x) => x.demand > 1.0001);
   strain.firstBusy85 = ahead.find((x) => x.utilisation >= 0.85) || null;
   strain.firstWaitLongerThanWork = ahead.find((x) => x.queueDays > work.mean) || null;
-  const stepLine = (x) => `x${f(x.demand, 2)} (${f(x.perDay, 1)}/day): busy ${f(x.utilisation * 100, 0)}%, wait for a person ${h(x.queueDays)} ±${f(x.ciQueueDays * 24, 1)} h; formula ${x.formulaQueueDays == null ? 'n/a' : h(x.formulaQueueDays)}`;
+  const stepLine = (x) => `x${f(x.demand, 2)} (${f(x.perDay, 1)}/day): busy ${f(x.utilisation * 100, 0)}%, wait for a person ${h(x.queueDays)} ±${f(x.ciQueueDays * 24, 1)} h; formula ${x.formulaQueueDays == null ? 'n/a' : h(x.formulaQueueDays)}; StochCraft says ${x.engineStatus}${x.peopleFor85 ? ', needs ' + x.peopleFor85 + ' people to stay under 85%' : ''}`;
+  const needLine = 'People needed to stay under 85% busy (StochCraft capacity check): ' + strain.points.map((x) => `${x.demand <= 1.0001 ? 'today' : 'x' + f(x.demand, 2)} ${x.peopleFor85 ?? people}`).join(', ') + ` (you have ${people}).`;
   const sline = `What breaks first: the team saturates at ${f(strain.saturationDemand, 2)}x today's demand (${f(strain.saturationPerDay, 1)} issues/day with ${people} working at once, each issue taking ${f(work.mean, 2)} days of work); past that the queue only grows.` +
-    (ahead.length ? '\nSteps (simulated, with the queueing formula beside each): ' + strain.points.map(stepLine).join('; ') + '.' : '\nToday is already at that limit.') +
+    (ahead.length ? '\n' + needLine + '\nSteps (simulated, with the queueing formula beside each): ' + strain.points.map(stepLine).join('; ') + '.' : '\nToday is already at that limit.') +
     (strain.firstWaitLongerThanWork ? `\nIssues first wait longer for a person than the work itself takes at about x${f(strain.firstWaitLongerThanWork.demand, 2)}.` : '\nWithin the range tested waiting for a person stays shorter than the work itself.');
   return {
     strain, profile: prof, totalMs: Date.now() - tf,
@@ -294,6 +298,7 @@ async function strainReport(payload) {
       `People working at once is ${payload.capacity ? 'what you set: ' + people : 'estimated as ' + people + ' so that today runs at about 70 percent busy'}; it is not in Jira.`,
       'The formula column is the Erlang C queueing formula adjusted for how uneven the work times are (Allen-Cunneen). It describes a long steady state, while each simulated step is one year, so near saturation the formula is the larger number; far from saturation the two agree closely.',
       'Steps use 6 replications each, so their ± is wider than in the forecast table; saturation is arithmetic, not simulated.',
+      'The status and the people needed come from StochCraft\'s own capacity check (the explain command): load is arrivals times work time divided by people, and 85% is its default target. The same check says no exact waiting formula exists for several people with uneven work times, which is why the formula column is an approximation.',
     ],
     summary: sline,
   };
@@ -380,6 +385,8 @@ export async function strainAction(payload) {
         teamBusy: `${n(x.utilisation * 100, 0)}%`,
         simulatedWaitForAPerson: `${h(x.queueDays)} (±${n(x.ciQueueDays * 24, 1)} h)`,
         queueingFormulaWait: x.formulaQueueDays == null ? 'n/a' : h(x.formulaQueueDays),
+        stochCraftStatus: x.engineStatus,
+        peopleNeededToStayUnder85Percent: x.peopleFor85 ? String(x.peopleFor85) : `${s.people} (enough)`,
       })),
       firstTimeWaitingIsLongerThanTheWork: s.firstWaitLongerThanWork ? `at about ${n(s.firstWaitLongerThanWork.demand, 2)}x` : 'not reached before saturation in the steps tested',
     },
