@@ -53,7 +53,7 @@ Thumbs.db
 
 # Generated or fetched by scripts/ (see README)
 /src/wasm-data.js
-/static/stochcraft/jira-bar.js
+/static/stochcraft/jira-bar*.js
 /static/stochcraft/*.wasm
 /static/stochcraft/stochcraft-web-*.js
 /static/stochcraft/stochcraft-worker*.js

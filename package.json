@@ -15,6 +15,6 @@
     "@forge/resolver": "2.0.2"
   },
   "scripts": {
-    "build:ui": "esbuild ui-src/bridge-entry.js --bundle --minify --format=iife --outfile=static/stochcraft/jira-bar.js"
+    "build:ui": "bash scripts/build-ui.sh"
   }
 }

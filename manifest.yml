@@ -4,13 +4,13 @@ modules:
       name: Flow forecaster
       description: Forecasts what more demand would do to a Jira project's waiting times, by simulating the team's flow with StochCraft.
       prompt: |
-        You help a team understand how their Jira project's flow would change if demand changed. You do it by running a simulation of the project's flow in StochCraft, a discrete-event simulation engine, through the forecast-flow action.
+        You help a team understand how their Jira project's flow would change if demand changed. You do it by running a simulation of the project's flow in StochCraft, a discrete-event simulation engine, through the forecast-flow and strain-flow actions.
 
         How to answer:
         1. You need a Jira project key. If the user has not given one and it is not in the context, ask for it. Use the dates the user gives (YYYY-MM-DD); if they give none, leave from and to empty so the action uses its default window.
         2. If the user says demand will change (for example "20 percent more work"), pass demand as a multiplier (1.2). If they say how many people work on the project at once, pass it as people; otherwise leave it empty and say it was estimated.
-        3. Call forecast-flow once. The action returns every number you may quote in copyTheseValuesExactly, already rounded and written out (for example "61%" or "1.1 h"). Copy those strings exactly as they are. Do not recalculate, round, convert units or combine them; if a number you want is not there, leave it out.
-        4. Answer with: one sentence of the main finding; a small table with one row for each scenario (issues per day, how busy the team is, wait for a person, pickup delay, time from created to resolved); then the pairedDifference line (the change from Today to the demand scenario, with its ± and howToRead) if it is present; then "What breaks first" from whatBreaksFirst: the saturation demand and what it means, the steps, and when waiting for a person first becomes longer than the work itself; then one line with the jiraToday values for comparison. Values written like "61% (±0.5 points)" are a mean with its 95% interval over the replications: copy the ± part too, and say once that ± is the 95% interval.
+        3. Call forecast-flow once and strain-flow once (the same project, from, to and people; strain-flow takes no demand). Each action returns every number you may quote in copyTheseValuesExactly, already rounded and written out (for example "61%" or "1.1 h"). Copy those strings exactly as they are. Do not recalculate, round, convert units or combine them; if a number you want is not there, leave it out.
+        4. Answer with: one sentence of the main finding; a small table with one row for each scenario from forecast-flow (issues per day, how busy the team is, wait for a person, pickup delay, time from created to resolved); then the pairedDifference line (the change from Today to the demand scenario, with its ± and howToRead) if it is present; then "What breaks first" from strain-flow: the saturation demand and what it means, a small table of the steps (demand, how busy, simulated wait with its ±, queueing-formula wait), and when waiting for a person first becomes longer than the work itself; then one line with the jiraToday values for comparison. Values written like "61% (±0.5 points)" are a mean with its 95% interval over the replications: copy the ± part too, and say once that ± is the 95% interval. Say once that the queueing formula is a long-run figure, so near saturation it is larger than the one-year simulation.
         5. Always say which window the forecast used (the window field), then give any warnings the action returns, in plain words, before the table. Then state the assumptions the action returns, in plain words: the number of people working at once is an estimate unless the user gave it, and the pickup delay is a fixed handoff time taken from Jira's waiting time.
         6. A warning is not a reason to hide the forecast: show it and the warning together. If the action says there are no resolved issues in the window, say so and suggest a different date range. Never forecast from nothing.
       conversationStarters:
@@ -18,6 +18,7 @@ modules:
         - Forecast the flow of project PLAT for 2024
       actions:
         - forecast-flow
+        - strain-flow
   action:
     - key: forecast-flow
       name: Forecast flow
@@ -50,6 +51,32 @@ modules:
           type: string
           description: How many people work on the project at once. Leave empty to estimate it.
           required: false
+    - key: strain-flow
+      name: Where the flow breaks
+      function: strainAction
+      description: Reads a Jira project's resolved issues, finds the demand at which the team is busy all the time, and simulates the steps up to it with StochCraft, next to the queueing formula.
+      actionVerb: GET
+      inputs:
+        project:
+          title: Project key
+          type: string
+          description: The Jira project key, for example PLAT.
+          required: true
+        from:
+          title: From
+          type: string
+          description: Start of the window, YYYY-MM-DD. Leave empty for the default window.
+          required: false
+        to:
+          title: To
+          type: string
+          description: End of the window, YYYY-MM-DD. Leave empty for the default window.
+          required: false
+        people:
+          title: People working at once
+          type: string
+          description: How many people work on the project at once. Leave empty to estimate it.
+          required: false
   jira:projectPage:
     - key: stochcraft-forge-hello-world-project-page
       resource: main
@@ -62,6 +89,9 @@ modules:
       memoryMB: 1024
     - key: forecastAction
       handler: index.forecastAction
+      memoryMB: 1024
+    - key: strainAction
+      handler: index.strainAction
       memoryMB: 1024
 resources:
   - key: main
