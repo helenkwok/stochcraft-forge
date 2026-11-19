@@ -23,8 +23,8 @@
 })();
 </script>
 <script type="module">
-import init, * as bindings from './stochcraft-web-5728bac4536f7a89.js';
-const wasm = await init({ module_or_path: './stochcraft-web-5728bac4536f7a89_bg.wasm' });
+import init, * as bindings from './stochcraft-web-f4f0768b989b8765.js';
+const wasm = await init({ module_or_path: './stochcraft-web-f4f0768b989b8765_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -60,7 +60,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
     #stochcraft_loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
       color: #8c8c8c; font: 14px system-ui, sans-serif; pointer-events: none; }
   </style>
-<link rel="modulepreload" href="./stochcraft-web-5728bac4536f7a89.js" crossorigin="anonymous"><link rel="modulepreload" href="./snippets/eframe-d31a8450ea12dfc1/inline0.js" crossorigin="anonymous"><link rel="preload" href="./stochcraft-web-5728bac4536f7a89_bg.wasm" crossorigin="anonymous" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./stochcraft-web-f4f0768b989b8765.js" crossorigin="anonymous"><link rel="modulepreload" href="./snippets/eframe-d31a8450ea12dfc1/inline0.js" crossorigin="anonymous"><link rel="preload" href="./stochcraft-web-f4f0768b989b8765_bg.wasm" crossorigin="anonymous" as="fetch" type="application/wasm"></head>
 <body>
   <div id="jira-bar" hidden><b>Jira</b> project <input id="jira-key" value="PLAT" aria-label="Project key"> from <input id="jira-from" value="2024-01-01" aria-label="From"> to <input id="jira-to" value="2024-09-01" aria-label="To"> <span>people working at once</span> <input id="jira-people" placeholder="auto" aria-label="People working at once"> <span>demand x</span> <input id="jira-demand" value="1.2" aria-label="Demand multiplier"> <button id="jira-load">Forecast</button><span id="jira-out">Reads the project&#39;s resolved issues and status history, builds a queue model from them and runs it in StochCraft: today, and with more demand.</span></div>
   <canvas id="stochcraft_canvas"></canvas>
