@@ -13,6 +13,8 @@ const go = $('jira-load');
 const status = $('jira-status');
 const results = $('jira-results');
 const toggle = $('jira-toggle');
+const sampleBtn = $('jira-sample');
+const projectList = $('jira-projects');
 
 const IDLE = "Reads a project's resolved issues and runs them through StochCraft.";
 
@@ -56,9 +58,12 @@ function forecastView(r) {
     warn.push(`In this window Jira shows fewer issues resolved (${num(flow.throughputPerDay, 1)} a day) than created (${num(flow.arrivalPerDay, 1)} a day). The model learns from resolved issues only, so real waits may be longer than forecast.`);
   if (flow.sampled < 50) warn.push(`Only ${flow.sampled} resolved issues were available to learn from, so the forecast is rough.`);
   warn.forEach((w) => out.push(note(w, 'warn')));
+  if (flow.sample) out.push(note('Sample data: a made-up team of about five people, not read from your Jira. Use it to see what the app does; run it on a project to forecast a real team.', 'warn'));
   out.push(
     note(
-      `${flow.project}, ${flow.from} to ${flow.to} (${flow.days} days): ${flow.arrivals.toLocaleString('en')} created (${num(flow.arrivalPerDay, 1)}/day), ${flow.resolved.toLocaleString('en')} resolved (${num(flow.throughputPerDay, 1)}/day). Work times from ${flow.sampled} resolved issues.`,
+      flow.sample
+        ? `${flow.arrivals.toLocaleString('en')} created (${num(flow.arrivalPerDay, 1)}/day), ${flow.resolved.toLocaleString('en')} resolved (${num(flow.throughputPerDay, 1)}/day) over ${flow.days} days. Work times from ${flow.sampled} made-up issues.`
+        : `${flow.project}, ${flow.from} to ${flow.to} (${flow.days} days): ${flow.arrivals.toLocaleString('en')} created (${num(flow.arrivalPerDay, 1)}/day), ${flow.resolved.toLocaleString('en')} resolved (${num(flow.throughputPerDay, 1)}/day). Work times from ${flow.sampled} resolved issues.`,
     ),
   );
   out.push(
@@ -148,6 +153,7 @@ function strainView(s) {
 function friendly(e) {
   const m = String((e && e.message) || e || '');
   if (/timed out/i.test(m)) return 'That took longer than Forge allows (25 seconds). Try a shorter date window.';
+  if (/No resolved issues in that project/i.test(m)) return 'This project has no resolved issues yet, so there is nothing to learn from. Try another project, or use the sample data.';
   if (/No resolved issues/i.test(m)) return 'No resolved issues with an In Progress step in that window. Try an earlier or wider window, or another project.';
   if (/Project key looks wrong/i.test(m)) return 'The project key should be 2 to 10 capital letters or digits, like PLAT.';
   if (/Dates must be/i.test(m)) return 'Use dates like 2024-01-01, with the start before the end.';
@@ -158,16 +164,19 @@ function friendly(e) {
 }
 
 // ---- inputs, checked before anything is sent
-function readInput() {
+function readInput(sample) {
+  const dm = Number(demand.value);
+  const ppl = people.value.trim();
+  if (!(dm >= 0.1 && dm <= 5)) return { bad: demand, why: 'Demand is a multiplier between 0.1 and 5, for example 1.2 for 20 percent more.' };
+  if (ppl !== '' && !(Number.isInteger(Number(ppl)) && Number(ppl) >= 1 && Number(ppl) <= 50)) return { bad: people, why: 'People working at once is a whole number from 1 to 50, or leave it empty to estimate it.' };
+  if (sample) return { input: { project: 'SAMPLE', sample: true, capacity: ppl }, demand: String(dm) };
   const k = key.value.trim().toUpperCase();
   const f = from.value.trim();
   const t = to.value.trim();
-  const dm = Number(demand.value);
-  const ppl = people.value.trim();
+  if (!k) return { bad: key, why: projectList.children.length ? 'Choose a project, or try the sample data.' : 'Type a project key, like PLAT, or try the sample data.' };
   if (!/^[A-Z][A-Z0-9_]{1,9}$/.test(k)) return { bad: key, why: 'The project key should be 2 to 10 capital letters or digits, like PLAT.' };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t) || f >= t) return { bad: from, why: 'Use dates like 2024-01-01, with the start before the end.' };
-  if (!(dm >= 0.1 && dm <= 5)) return { bad: demand, why: 'Demand is a multiplier between 0.1 and 5, for example 1.2 for 20 percent more.' };
-  if (ppl !== '' && !(Number.isInteger(Number(ppl)) && Number(ppl) >= 1 && Number(ppl) <= 50)) return { bad: people, why: 'People working at once is a whole number from 1 to 50, or leave it empty to estimate it.' };
+  if ((f === '') !== (t === '')) return { bad: f === '' ? from : to, why: 'Give both dates, or leave both empty for the latest eight months of the project.' };
+  if (f !== '' && (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t) || f >= t)) return { bad: from, why: 'Use dates like 2024-01-01, with the start before the end.' };
   return { input: { project: k, from: f, to: t, capacity: ppl }, demand: String(dm) };
 }
 
@@ -205,10 +214,10 @@ function postRow(project) {
 }
 
 let running = false;
-async function load() {
+async function load(sample) {
   if (running) return;
   for (const i of [key, from, to, people, demand]) i.removeAttribute('aria-invalid');
-  const v = readInput();
+  const v = readInput(sample === true);
   if (v.bad) {
     v.bad.setAttribute('aria-invalid', 'true');
     v.bad.focus();
@@ -218,6 +227,7 @@ async function load() {
   }
   running = true;
   go.disabled = true;
+  sampleBtn.disabled = true;
   status.className = '';
   status.textContent = 'Reading Jira and running StochCraft, about 12 seconds…';
   const t0 = Date.now();
@@ -255,16 +265,27 @@ async function load() {
   if (window.__jiraFlow) results.append(postRow(v.input.project));
   status.textContent = `Done in ${((Date.now() - t0) / 1000).toFixed(0)} s.`;
   go.disabled = false;
+  sampleBtn.disabled = false;
   running = false;
 }
 
-go.addEventListener('click', load);
-for (const i of [key, from, to, people, demand]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
+go.addEventListener('click', () => load(false));
+sampleBtn.addEventListener('click', () => load(true));
+for (const i of [key, from, to, people, demand]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') load(false); });
 toggle.addEventListener('click', () => {
   results.hidden = !results.hidden;
   toggle.textContent = results.hidden ? 'Show results' : 'Hide results';
   toggle.setAttribute('aria-expanded', String(!results.hidden));
 });
+// The projects the user can see, the largest first; the first one fills the box. A site with none points at the sample data.
+invoke('projects').then(
+  ({ projects, suggested }) => {
+    projectList.replaceChildren(...projects.map((p) => el('option', { value: p.key }, p.name)));
+    if (!key.value && projects.length) key.value = suggested && projects.some((p) => p.key === suggested) ? suggested : projects[0].key;
+    if (!projects.length) status.textContent = 'No projects yet on this site. Try the sample data to see what the app does.';
+  },
+  () => {},
+);
 status.textContent = IDLE;
-window.loadJiraFlow = load;
+window.loadJiraFlow = () => load(false);
 bar.hidden = false;

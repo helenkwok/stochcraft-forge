@@ -67,7 +67,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
     #jira-bar input:focus-visible, #jira-bar button:focus-visible, #jira-results summary:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
     #jira-bar button { padding: 5px 12px; border: 0; border-radius: 3px; background: #fff; color: #0b6e86; font: inherit; font-weight: 600; cursor: pointer; }
     #jira-bar button[disabled] { opacity: .6; cursor: progress; }
-    #jira-bar button#jira-toggle { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.7); font-weight: 500; }
+    #jira-bar button#jira-sample, #jira-bar button#jira-toggle { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.7); font-weight: 500; }
     #jira-status { flex: 1 1 240px; min-width: 0; }
     #jira-status.err { color: #ffd2c7; font-weight: 600; }
     #jira-results { flex: none; max-height: 46vh; overflow: auto; padding: 8px 14px 10px; background: #f7fafb; border-bottom: 3px solid #0b6e86; }
@@ -103,12 +103,14 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 <body>
   <div id="jira-bar" hidden>
     <b>Jira</b>
-    <label>Project <input id="jira-key" value="PLAT" aria-label="Project key" autocomplete="off"></label>
-    <label>From <input id="jira-from" value="2024-01-01" placeholder="YYYY-MM-DD" aria-label="From (YYYY-MM-DD)"></label>
-    <label>To <input id="jira-to" value="2024-09-01" placeholder="YYYY-MM-DD" aria-label="To (YYYY-MM-DD)"></label>
+    <label>Project <input id="jira-key" list="jira-projects" placeholder="KEY" aria-label="Project key" autocomplete="off"></label>
+    <datalist id="jira-projects"></datalist>
+    <label>From <input id="jira-from" placeholder="auto" aria-label="From (YYYY-MM-DD), empty for the latest eight months"></label>
+    <label>To <input id="jira-to" placeholder="auto" aria-label="To (YYYY-MM-DD), empty for the latest eight months"></label>
     <label>People <input id="jira-people" placeholder="auto" aria-label="People working at once, empty to estimate"></label>
     <label>Demand × <input id="jira-demand" value="1.2" aria-label="Demand multiplier"></label>
     <button id="jira-load" type="button">Forecast</button>
+    <button id="jira-sample" type="button" title="Run on a made-up team instead of your Jira data">Try sample data</button>
     <button id="jira-toggle" type="button" aria-controls="jira-results" aria-expanded="false" hidden>Hide results</button>
     <span id="jira-status" role="status" aria-live="polite"></span>
   </div>
@@ -118,6 +120,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
     <div id="stochcraft_loading" role="status">Loading StochCraft&hellip;</div>
   </div>
   <noscript>StochCraft needs JavaScript and WebAssembly.</noscript>
-  <script src="./jira-bar-fb7f3a6d2e2d.js"></script>
+  <script src="./jira-bar-0e300432a8ff.js"></script>
 </body>
 </html>

@@ -9,6 +9,7 @@ import { WASM_BASE64, MM1 } from './wasm-data';
 import { buildModel, capacityOf, defaultCapacity, runModel } from './flow-model';
 import { fitFamilies } from './fit';
 import { buildForecastComment, ISSUE_RE } from './comment';
+import { sampleFlow } from './sample';
 
 const resolver = new Resolver();
 
@@ -83,9 +84,18 @@ const fmt = (x) => (x == null ? 'n/a' : x.mean.toFixed(2) + ' (median ' + x.medi
 async function jiraFlow({ project, from, to }, prof) {
   const tj = Date.now(); const tick = (l, t) => prof && prof.push([l, Date.now() - t]);
   const key = String(project || '').toUpperCase();
-  from = from || '2024-01-01';
-  to = to || '2024-09-01';
   if (!KEY_RE.test(key)) throw new Error('Project key looks wrong');
+  // No dates given: the eight months ending at the project's latest resolved issue, so the window always holds data
+  // (a fixed window would be empty on most sites).
+  if (!from || !to) {
+    const last = await jira(route`/rest/api/3/search/jql`, { jql: `project = "${key}" AND resolution is not EMPTY ORDER BY resolved DESC`, fields: ['resolutiondate'], maxResults: 1 });
+    const done = last.issues?.[0]?.fields?.resolutiondate;
+    if (!done) throw new Error('No resolved issues in that project');
+    const d = new Date(done);
+    const end = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+    to = new Date(end).toISOString().slice(0, 10);
+    from = new Date(end - 240 * 86400000).toISOString().slice(0, 10);
+  }
   if (!DAY_RE.test(from) || !DAY_RE.test(to) || from >= to) throw new Error('Dates must be YYYY-MM-DD, from before to');
   const days = (Date.parse(to) - Date.parse(from)) / 86400000;
   const inWindow = (field) => `project = "${key}" AND ${field} >= "${from}" AND ${field} < "${to}"`;
@@ -194,7 +204,7 @@ const pm = (x, n) => (x == null ? '' : ' ±' + f(x, n));
 async function setup(payload, prof) {
   const tw = Date.now();
   const [flow, wasm] = await Promise.all([
-    jiraFlow(payload, prof),
+    payload.sample ? Promise.resolve(sampleFlow(stats)) : jiraFlow(payload, prof),
     WebAssembly.compile(Buffer.from(WASM_BASE64, 'base64')).then((m) => { prof.push(['wasm decode and compile once', Date.now() - tw]); return m; }),
   ]);
   if (!flow.serviceDays || !flow.queueDays || !(flow.arrivalPerDay > 0)) throw new Error('No resolved issues with an In Progress step in that window');
@@ -307,6 +317,21 @@ async function strainReport(payload) {
 
 resolver.define('forecast', ({ payload }) => forecast(payload || {}));
 resolver.define('strain', ({ payload }) => strainReport(payload || {}));
+
+// The projects the viewer can see, and the one to suggest: the project with the most resolved issues (counted for up to 30
+// projects at once), so a first forecast lands on a project that has plenty to learn from.
+resolver.define('projects', async () => {
+  const res = await api.asUser().requestJira(route`/rest/api/3/project/search?maxResults=100`, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`Jira ${res.status}`);
+  const j = await res.json();
+  const projects = (j.values || []).map((p) => ({ key: String(p.key), name: String(p.name || '').slice(0, 60) }));
+  const counts = await Promise.allSettled(
+    projects.slice(0, 30).map((p) => jira(route`/rest/api/3/search/approximate-count`, { jql: `project = "${p.key}" AND resolution is not EMPTY` })),
+  );
+  let suggested = null, best = 0;
+  counts.forEach((c, i) => { if (c.status === 'fulfilled' && c.value.count > best) { best = c.value.count; suggested = projects[i].key; } });
+  return { projects, suggested };
+});
 
 // Write-back: the forecast the panel holds, posted as a comment on an issue the user names, as the user (their permissions).
 resolver.define('postForecast', async ({ payload }) => {

@@ -29,8 +29,8 @@ export function buildForecastComment(forecast, strain, today = new Date()) {
   const scen = Array.isArray(f.scenarios) ? f.scenarios.slice(0, 2) : [];
   if (!scen.length || !flow.project) throw new Error('No forecast to post: run Forecast first');
   const content = [];
-  content.push(heading(3, `Flow forecast: ${clean(flow.project, 12)}, ${clean(flow.from, 10)} to ${clean(flow.to, 10)}`));
-  content.push(para(`From ${num(flow.sampled, 0)} resolved issues; ${num(flow.arrivalPerDay, 1)} created and ${num(flow.throughputPerDay, 1)} resolved per day.`));
+  content.push(heading(3, flow.sample ? 'Flow forecast: sample data' : `Flow forecast: ${clean(flow.project, 12)}, ${clean(flow.from, 10)} to ${clean(flow.to, 10)}`));
+  content.push(para(flow.sample ? 'Sample data: a made-up team, not read from Jira.' : `From ${num(flow.sampled, 0)} resolved issues; ${num(flow.arrivalPerDay, 1)} created and ${num(flow.throughputPerDay, 1)} resolved per day.`));
   content.push(
     table(
       ['Scenario', 'Issues/day', 'Team busy', 'Wait for a person', 'Pickup delay', 'Created to resolved'],
