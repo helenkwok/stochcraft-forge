@@ -52,20 +52,65 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1b1b1b; }
     @media (prefers-color-scheme: light) { html, body { background: #f8f8f8; } }
-    #stochcraft_canvas { position: absolute; inset: 132px 0 0 0; width: 100%; height: calc(100% - 132px); display: block; }
-    #jira-bar { position: absolute; inset: 0 0 auto 0; height: 132px; box-sizing: border-box; padding: 6px 12px; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; align-content: flex-start; background: #0b6e86; color: #fff; font: 13px system-ui, sans-serif; overflow: hidden; }
-    #jira-bar input { width: 84px; padding: 4px 6px; border: 0; border-radius: 3px; }
-    #jira-bar button { padding: 5px 10px; border: 0; border-radius: 3px; background: #fff; color: #0b6e86; font-weight: 600; cursor: pointer; }
-    #jira-out { flex: 1 1 100%; font-size: 12px; line-height: 1.3; height: 78px; overflow: auto; white-space: pre-wrap; }
+    body { display: flex; flex-direction: column; font: 13px/1.4 system-ui, sans-serif; color: #172b4d; }
+    #stage { position: relative; flex: 1 1 auto; min-height: 0; }
+    #stochcraft_canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
     #stochcraft_loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
       color: #8c8c8c; font: 14px system-ui, sans-serif; pointer-events: none; }
+    #jira-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 12px; background: #0b6e86; color: #fff; }
+    #jira-bar[hidden], #jira-results[hidden], #jira-toggle[hidden] { display: none; }
+    #jira-bar label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    #jira-bar input { width: 84px; padding: 4px 6px; border: 2px solid transparent; border-radius: 3px; font: inherit; color: #172b4d; }
+    #jira-bar #jira-key { width: 58px; text-transform: uppercase; }
+    #jira-bar #jira-people, #jira-bar #jira-demand { width: 58px; }
+    #jira-bar input[aria-invalid="true"] { border-color: #ffbdad; background: #fff5f2; }
+    #jira-bar input:focus-visible, #jira-bar button:focus-visible, #jira-results summary:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+    #jira-bar button { padding: 5px 12px; border: 0; border-radius: 3px; background: #fff; color: #0b6e86; font: inherit; font-weight: 600; cursor: pointer; }
+    #jira-bar button[disabled] { opacity: .6; cursor: progress; }
+    #jira-bar button#jira-toggle { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.7); font-weight: 500; }
+    #jira-status { flex: 1 1 240px; min-width: 0; }
+    #jira-status.err { color: #ffd2c7; font-weight: 600; }
+    #jira-results { flex: none; max-height: 46vh; overflow: auto; padding: 8px 14px 10px; background: #f7fafb; border-bottom: 3px solid #0b6e86; }
+    #jira-results [hidden] { display: none; }
+    #jira-results .tabs { display: flex; gap: 4px; margin: 0 0 6px; border-bottom: 1px solid #b3d4dc; }
+    #jira-results .tabs button { padding: 6px 12px; border: 0; border-bottom: 3px solid transparent; background: none; font: inherit; font-weight: 600; color: #42526e; cursor: pointer; }
+    #jira-results .tabs button[aria-selected="true"] { color: #0b6e86; border-bottom-color: #0b6e86; }
+    #jira-results .tabs button:focus-visible { outline: 2px solid #0b6e86; outline-offset: -2px; }
+    #jira-results h3 { margin: 10px 0 4px; font-size: 13px; color: #0b6e86; }
+    #jira-results p { margin: 4px 0; }
+    #jira-results .lead { font-weight: 600; }
+    #jira-results .warn { padding: 5px 8px; background: #fff4e5; border-left: 3px solid #ff991f; }
+    #jira-results .callout { padding: 6px 8px; background: #e6f4f7; border-left: 3px solid #0b6e86; }
+    #jira-results .pending { color: #5e6c84; font-style: italic; }
+    #jira-results .pm { color: #5e6c84; font-size: 11px; white-space: nowrap; }
+    #jira-results table { border-collapse: collapse; width: 100%; margin: 4px 0; font-variant-numeric: tabular-nums; }
+    #jira-results th, #jira-results td { padding: 3px 8px; text-align: right; border-bottom: 1px solid #dfe5eb; }
+    #jira-results thead th { text-align: right; font-weight: 600; color: #42526e; }
+    #jira-results th[scope="row"], #jira-results thead th:first-child { text-align: left; }
+    #jira-results tr.hot td, #jira-results tr.hot th { background: #fff4e5; }
+    #jira-results details { margin: 8px 0 2px; color: #42526e; }
+    #jira-results summary { cursor: pointer; }
+    #jira-results ul { margin: 4px 0 0; padding-left: 18px; }
   </style>
 <link rel="modulepreload" href="./stochcraft-web-bb0f6733b8c398a.js" crossorigin="anonymous"><link rel="modulepreload" href="./snippets/eframe-d31a8450ea12dfc1/inline0.js" crossorigin="anonymous"><link rel="preload" href="./stochcraft-web-bb0f6733b8c398a_bg.wasm" crossorigin="anonymous" as="fetch" type="application/wasm"></head>
 <body>
-  <div id="jira-bar" hidden><b>Jira</b> project <input id="jira-key" value="PLAT" aria-label="Project key"> from <input id="jira-from" value="2024-01-01" aria-label="From"> to <input id="jira-to" value="2024-09-01" aria-label="To"> <span>people working at once</span> <input id="jira-people" placeholder="auto" aria-label="People working at once"> <span>demand x</span> <input id="jira-demand" value="1.2" aria-label="Demand multiplier"> <button id="jira-load">Forecast</button><span id="jira-out">Reads the project&#39;s resolved issues and status history, builds a queue model from them and runs it in StochCraft: today, and with more demand.</span></div>
-  <canvas id="stochcraft_canvas"></canvas>
-  <div id="stochcraft_loading" role="status">Loading StochCraft&hellip;</div>
+  <div id="jira-bar" hidden>
+    <b>Jira</b>
+    <label>Project <input id="jira-key" value="PLAT" aria-label="Project key" autocomplete="off"></label>
+    <label>From <input id="jira-from" value="2024-01-01" placeholder="YYYY-MM-DD" aria-label="From (YYYY-MM-DD)"></label>
+    <label>To <input id="jira-to" value="2024-09-01" placeholder="YYYY-MM-DD" aria-label="To (YYYY-MM-DD)"></label>
+    <label>People <input id="jira-people" placeholder="auto" aria-label="People working at once, empty to estimate"></label>
+    <label>Demand × <input id="jira-demand" value="1.2" aria-label="Demand multiplier"></label>
+    <button id="jira-load" type="button">Forecast</button>
+    <button id="jira-toggle" type="button" aria-controls="jira-results" aria-expanded="false" hidden>Hide results</button>
+    <span id="jira-status" role="status" aria-live="polite"></span>
+  </div>
+  <section id="jira-results" aria-label="Forecast results" hidden></section>
+  <div id="stage">
+    <canvas id="stochcraft_canvas"></canvas>
+    <div id="stochcraft_loading" role="status">Loading StochCraft&hellip;</div>
+  </div>
   <noscript>StochCraft needs JavaScript and WebAssembly.</noscript>
-  <script src="./jira-bar-71136dc484e4.js"></script>
+  <script src="./jira-bar-1383621a03c4.js"></script>
 </body>
 </html>
