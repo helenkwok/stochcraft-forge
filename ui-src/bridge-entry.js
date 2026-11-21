@@ -1,6 +1,6 @@
 // Built into static/stochcraft/jira-bar-<hash>.js: the Jira bar above StochCraft, using the Forge bridge.
 // One compact row of inputs; the results open in their own panel (tables, no raw text) above the StochCraft window.
-import { invoke } from '@forge/bridge';
+import { invoke, view } from '@forge/bridge';
 
 const $ = (id) => document.getElementById(id);
 const bar = $('jira-bar');
@@ -152,6 +152,7 @@ function friendly(e) {
   if (/Project key looks wrong/i.test(m)) return 'The project key should be 2 to 10 capital letters or digits, like PLAT.';
   if (/Dates must be/i.test(m)) return 'Use dates like 2024-01-01, with the start before the end.';
   if (/Jira (401|403)/.test(m)) return 'Jira did not let you read that project. You need permission to browse it.';
+  if (/Jira (400|404)/.test(m) && /comment|issue/i.test(m)) return 'Jira could not find that issue, or you may not comment on it.';
   if (/Jira (400|404)/.test(m)) return 'Jira could not find that project or window. Check the project key.';
   return 'Something went wrong: ' + m.replace(/^There was an error invoking the function - /, '').slice(0, 200);
 }
@@ -168,6 +169,39 @@ function readInput() {
   if (!(dm >= 0.1 && dm <= 5)) return { bad: demand, why: 'Demand is a multiplier between 0.1 and 5, for example 1.2 for 20 percent more.' };
   if (ppl !== '' && !(Number.isInteger(Number(ppl)) && Number(ppl) >= 1 && Number(ppl) <= 50)) return { bad: people, why: 'People working at once is a whole number from 1 to 50, or leave it empty to estimate it.' };
   return { input: { project: k, from: f, to: t, capacity: ppl }, demand: String(dm) };
+}
+
+// ---- write-back: the forecast as a comment on an issue
+const slim = (r) => r && JSON.parse(JSON.stringify(r, (k, x) => (k === 'serviceSample' || k === 'perRep' || k === 'profile' ? undefined : x)));
+function postRow(project) {
+  const issue = el('input', { value: project + '-1', 'aria-label': 'Issue to comment on', autocomplete: 'off', class: 'issue' });
+  const post = el('button', { type: 'button' }, 'Post to Jira');
+  const msg = el('span', { role: 'status', 'aria-live': 'polite' });
+  post.addEventListener('click', async () => {
+    const k = issue.value.trim().toUpperCase();
+    msg.className = '';
+    if (!/^[A-Z][A-Z0-9_]{1,9}-\d{1,7}$/.test(k)) {
+      issue.setAttribute('aria-invalid', 'true');
+      msg.className = 'err';
+      msg.textContent = 'An issue key looks like PLAT-123.';
+      return;
+    }
+    issue.removeAttribute('aria-invalid');
+    post.disabled = true;
+    msg.textContent = 'Posting…';
+    try {
+      const r = await invoke('postForecast', { issueKey: k, forecast: slim(window.__jiraFlow), strain: slim(window.__jiraStrain) });
+      let url = null;
+      try { url = `${(await view.getContext()).siteUrl}/browse/${r.issue}?focusedCommentId=${r.id}`; } catch (e) { /* no link outside Jira */ }
+      msg.replaceChildren('Posted as you on ', url ? el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, r.issue) : r.issue, '.');
+      window.__jiraPosted = r;
+    } catch (e) {
+      msg.className = 'err';
+      msg.textContent = friendly(e);
+    }
+    post.disabled = false;
+  });
+  return el('div', { class: 'postrow' }, 'Save this forecast in Jira as a comment on ', issue, post, msg);
 }
 
 let running = false;
@@ -218,6 +252,7 @@ async function load() {
     (e) => fail(secStrain, e),
   );
   await Promise.all([a, c]);
+  if (window.__jiraFlow) results.append(postRow(v.input.project));
   status.textContent = `Done in ${((Date.now() - t0) / 1000).toFixed(0)} s.`;
   go.disabled = false;
   running = false;

@@ -72,6 +72,13 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
     #jira-status.err { color: #ffd2c7; font-weight: 600; }
     #jira-results { flex: none; max-height: 46vh; overflow: auto; padding: 8px 14px 10px; background: #f7fafb; border-bottom: 3px solid #0b6e86; }
     #jira-results [hidden] { display: none; }
+    #jira-results .postrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #dfe5eb; }
+    #jira-results .postrow input { width: 84px; padding: 3px 6px; border: 2px solid #b3d4dc; border-radius: 3px; font: inherit; text-transform: uppercase; }
+    #jira-results .postrow input[aria-invalid="true"] { border-color: #de350b; }
+    #jira-results .postrow button { padding: 4px 12px; border: 0; border-radius: 3px; background: #0b6e86; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+    #jira-results .postrow button[disabled] { opacity: .6; cursor: progress; }
+    #jira-results .postrow input:focus-visible, #jira-results .postrow button:focus-visible, #jira-results .postrow a:focus-visible { outline: 2px solid #0b6e86; outline-offset: 2px; }
+    #jira-results .postrow .err { color: #bf2600; font-weight: 600; }
     #jira-results .tabs { display: flex; gap: 4px; margin: 0 0 6px; border-bottom: 1px solid #b3d4dc; }
     #jira-results .tabs button { padding: 6px 12px; border: 0; border-bottom: 3px solid transparent; background: none; font: inherit; font-weight: 600; color: #42526e; cursor: pointer; }
     #jira-results .tabs button[aria-selected="true"] { color: #0b6e86; border-bottom-color: #0b6e86; }
@@ -111,6 +118,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
     <div id="stochcraft_loading" role="status">Loading StochCraft&hellip;</div>
   </div>
   <noscript>StochCraft needs JavaScript and WebAssembly.</noscript>
-  <script src="./jira-bar-1383621a03c4.js"></script>
+  <script src="./jira-bar-fb7f3a6d2e2d.js"></script>
 </body>
 </html>

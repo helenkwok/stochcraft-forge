@@ -8,6 +8,7 @@ import { WASI } from 'wasi';
 import { WASM_BASE64, MM1 } from './wasm-data';
 import { buildModel, capacityOf, defaultCapacity, runModel } from './flow-model';
 import { fitFamilies } from './fit';
+import { buildForecastComment, ISSUE_RE } from './comment';
 
 const resolver = new Resolver();
 
@@ -306,6 +307,16 @@ async function strainReport(payload) {
 
 resolver.define('forecast', ({ payload }) => forecast(payload || {}));
 resolver.define('strain', ({ payload }) => strainReport(payload || {}));
+
+// Write-back: the forecast the panel holds, posted as a comment on an issue the user names, as the user (their permissions).
+resolver.define('postForecast', async ({ payload }) => {
+  const p = payload || {};
+  const issue = String(p.issueKey || '').trim().toUpperCase();
+  if (!ISSUE_RE.test(issue)) throw new Error('Issue key looks wrong');
+  const body = buildForecastComment(p.forecast, p.strain);
+  const c = await jira(route`/rest/api/3/issue/${issue}/comment`, { body });
+  return { id: c.id, issue };
+});
 
 resolver.define('simulate', () => probe());
 

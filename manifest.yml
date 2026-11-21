@@ -105,6 +105,7 @@ app:
 permissions:
   scopes:
     - read:jira-work
+    - write:jira-work
   content:
     scripts:
       - unsafe-inline
